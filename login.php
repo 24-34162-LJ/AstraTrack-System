@@ -74,6 +74,7 @@ function e(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8')
 
 $logoIcon = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3.3 7.5L12 12.5l8.7-5"/><path d="M12 22V12.5"/></svg>';
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -95,7 +96,7 @@ $logoIcon = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke=
         <aside class="col-lg-6 d-none d-lg-flex brand-panel">
             <div class="brand-inner">
 
-                <a class="brand-link" href="landing_page.php" aria-label="AstraTrack home">
+                <a class="brand-link" href="index.php" aria-label="AstraTrack home">
                     <span class="brand-logo"><?= $logoIcon ?></span>
                     <span class="brand-name">Astra<span>Track</span></span>
                 </a>

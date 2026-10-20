@@ -1,24 +1,18 @@
 <?php
 
-$host = "localhost";
-$dbname = "astratrackdb";
+$servername = "localhost";
 $username = "root";
 $password = "";
-
+$dbname = "";
 
 try {
-  $pdo = new PDO(
-    "mysql:host=$host;dbname=$dbname; charset=utf8mb4",
-    $username,
-    $password
-  );
+  $conn = new PDO("mysql:host=$servername;dbname=$dbname", $username, $password);
 
-  $pdo->setAttribute(
-    PDO::ATTR_ERRMODE,
-    PDO::ERRMODE_EXCEPTION
-  );
-} catch (PDOException $e) {
-  die("Connection failed: " . $e->getMessage());
+  $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+  echo "connection succsess";
+} catch (PDOException $e){
+  die("connection failed: " . $e->getMessage());
 }
 
 ?>
