@@ -1,4 +1,6 @@
 <?php
+
+require_once "config/database.php";
 /**
  * AstraTrack - Login page
  * Files: login.php + css/login.css + js/login.js
@@ -17,17 +19,6 @@ if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 }
 
-/**
- * DEMO USERS - replace this with a database lookup (PDO + password_verify).
- * Demo login:  admin / admin123
- */
-$users = [
-    'admin' => [
-        'email' => 'admin@astracargo.ph',
-        'hash'  => password_hash('admin123', PASSWORD_DEFAULT),
-        'name'  => 'Administrator',
-    ],
-];
 
 $error = '';
 $old   = '';
@@ -42,17 +33,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($login === '' || $password === '') {
         $error = 'Enter your email or username and password.';
     } else {
-        $found = null;
-        foreach ($users as $username => $u) {
-            if (strcasecmp($login, $username) === 0 || strcasecmp($login, $u['email']) === 0) {
-                $found = $u + ['username' => $username];
-                break;
-            }
-        }
+        $stmt = $conn->prepare(
+                "SELECT user_id, full_name, email, password_hash, role 
+                FROM users 
+                WHERE (full_name = ? OR email = ?) AND status = 'active'
+                LIMIT 1"
+        );
+        $stmt->execute([$login, $login]);
+        $user = $stmt->fetch();
 
-        if ($found && password_verify($password, $found['hash'])) {
+        if ($user && password_verify($password, $user['password_hash'])) {
             session_regenerate_id(true);
-            $_SESSION['user'] = ['username' => $found['username'], 'name' => $found['name']];
+            $_SESSION['user'] = [
+                'id' => $user['user_id'], 
+                'full_name' => $user['full_name'],
+                'role' => $user['role'],
+                ];
 
             if (!empty($_POST['remember'])) {
                 // Keeps the session cookie for 30 days
@@ -63,7 +59,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'samesite' => 'Lax',
                 ]);
             }
-            header('Location: dashboard.php');
+            switch ($user['role']) {
+                case 'admin':
+                    header('Location: admin.php');
+                    break;
+                case 'staff':
+                    header('Location: staff.php');
+                    break;
+                case 'client':
+                    header('Location: dashboard.php');
+                    break;
+                default:
+                     // safety fallback
+                    header('Location: login.php');
+                    break;
+            }
             exit;
         }
         $error = 'Incorrect email/username or password.';

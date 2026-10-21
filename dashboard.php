@@ -1,6 +1,13 @@
 <?php
 
 
+session_start();
+if (empty($_SESSION['user']) || $_SESSION['user']['role'] !== 'client') {
+    header('Location: login.php');
+    exit;
+}
+
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Destroy the session and redirect to login page
     session_start();
@@ -8,6 +15,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     header("Location: login.php");
     exit();
 }
+
 
 ?>
 
