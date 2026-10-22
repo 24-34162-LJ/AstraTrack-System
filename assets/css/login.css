@@ -1,0 +1,180 @@
+/* AstraTrack - Login page styles */
+:root {
+    --at-navy: #17395e;
+    --at-navy-dark: #12304f;
+    --at-blue: #2f7fc1;
+    --at-sky: #6fb1e4;
+    --at-panel: #f4f6f9;
+    --at-field: #eef2f7;
+    --at-border: #cfd9e6;
+    --at-text-muted: #5f7186;
+    --at-danger: #c0392b;
+}
+
+html, body { height: 100%; }
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--at-navy);
+    background: var(--at-panel);
+    -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, .brand-name { font-family: 'Poppins', sans-serif; }
+
+/* =========================================================
+   LEFT BRAND PANEL
+   Logo, illustration, heading, and footer all live inside
+   .brand-inner, so they share the same left AND right edge.
+   ========================================================= */
+.brand-panel {
+    background: var(--at-navy);
+    color: #fff;
+    padding: 2.25rem clamp(2rem, 4.5vw, 5rem);
+    justify-content: center;            /* centers .brand-inner in the panel */
+}
+.brand-inner {
+    width: 100%;
+    max-width: 520px;                   /* <- width of the whole left column */
+    display: flex;
+    flex-direction: column;
+}
+
+/* Logo */
+.brand-link { display: inline-flex; align-items: center; gap: .6rem; text-decoration: none; width: fit-content; }
+.brand-logo {
+    width: 30px; height: 30px;
+    background: var(--at-blue);
+    border-radius: 8px;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+}
+.brand-name { font-size: 1.1rem; font-weight: 600; letter-spacing: .2px; color: #fff; }
+.brand-name span { color: var(--at-sky); }
+.brand-link:focus-visible { outline: 2px solid var(--at-sky); outline-offset: 4px; border-radius: 6px; }
+
+/* Middle block: illustration + heading + subtitle */
+.brand-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 2rem 0 3rem;               /* bottom > top = optically centered */
+}
+.illustration { width: 100%; height: auto; display: block; margin: 0 0 2rem; }
+.brand-title {
+    font-size: clamp(1.2rem, 1.5vw, 1.5rem);   /* <- heading size */
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 .5rem;
+}
+.brand-sub { color: #cfdced; font-size: .85rem; line-height: 1.5; margin: 0; }
+.brand-footer { color: #a9bdd4; font-size: .72rem; }
+
+/* =========================================================
+   RIGHT LOGIN PANEL
+   ========================================================= */
+.login-panel {
+    background: var(--at-panel);
+    padding: 2rem 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+.brand-link-dark .brand-name { color: var(--at-navy); }
+.brand-link-dark .brand-name span { color: var(--at-blue); }
+
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    background: #fff;
+    border: 1px solid #e3e9f1;
+    border-radius: 16px;
+    padding: 2rem;
+    box-shadow: 0 10px 30px rgba(23, 57, 94, .12);
+    animation: cardIn .45s ease both;
+}
+@keyframes cardIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: none; }
+}
+.login-card h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: .35rem; }
+.login-card .lead-sm { color: var(--at-text-muted); font-size: .82rem; margin-bottom: 1.5rem; }
+
+/* Fields */
+.form-label { font-size: .72rem; font-weight: 600; color: var(--at-navy); margin-bottom: .35rem; }
+.form-control {
+    background: var(--at-field);
+    border: 1px solid var(--at-border);
+    border-radius: 8px;
+    height: 42px;
+    font-size: .8rem;
+    color: var(--at-navy);
+    transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.form-control::placeholder { color: #8493a6; }
+.form-control:hover { border-color: #b4c3d6; }
+.form-control:focus {
+    background: #fff;
+    border-color: var(--at-blue);
+    box-shadow: 0 0 0 .2rem rgba(47, 127, 193, .2);
+}
+.form-control.is-invalid { background-image: none; border-color: var(--at-danger); }
+.form-control.is-invalid:focus { box-shadow: 0 0 0 .2rem rgba(192, 57, 43, .18); }
+.invalid-feedback { font-size: .7rem; color: var(--at-danger); margin-top: .3rem; }
+.form-control.is-invalid ~ .invalid-feedback,
+.password-wrap .form-control.is-invalid ~ .toggle-pass ~ .invalid-feedback { display: block; }
+.d-block-if-invalid { display: none; }
+.password-wrap.has-error ~ .d-block-if-invalid { display: block; }
+
+/* Password + eye */
+.password-wrap { position: relative; }
+.password-wrap .form-control { padding-right: 2.75rem; }
+.toggle-pass {
+    position: absolute; top: 0; right: 0; height: 42px; width: 44px;
+    border: 0; background: transparent; color: var(--at-text-muted);
+    display: grid; place-items: center; border-radius: 0 8px 8px 0;
+    transition: color .15s;
+}
+.toggle-pass:hover { color: var(--at-navy); }
+.toggle-pass:focus-visible { outline: 2px solid var(--at-blue); outline-offset: -2px; }
+.caps-hint { font-size: .7rem; color: #9a6a00; margin-top: .3rem; }
+
+/* Checkbox */
+.form-check-input { border-color: var(--at-border); background-color: var(--at-field); cursor: pointer; }
+.form-check-input:checked { background-color: var(--at-navy); border-color: var(--at-navy); }
+.form-check-input:focus { box-shadow: 0 0 0 .2rem rgba(47, 127, 193, .2); border-color: var(--at-blue); }
+.form-check-label { font-size: .75rem; color: var(--at-text-muted); cursor: pointer; }
+
+/* Button */
+.btn-login {
+    background: var(--at-navy);
+    border-color: var(--at-navy);
+    color: #fff;
+    height: 44px;
+    border-radius: 8px;
+    font-size: .85rem;
+    font-weight: 600;
+    transition: background-color .15s, transform .15s, box-shadow .15s;
+}
+.btn-login:hover, .btn-login:focus {
+    background: var(--at-navy-dark); border-color: var(--at-navy-dark); color: #fff;
+    box-shadow: 0 6px 14px rgba(23, 57, 94, .25);
+}
+.btn-login:active { transform: translateY(1px); box-shadow: none; }
+.btn-login:focus-visible { box-shadow: 0 0 0 .2rem rgba(47, 127, 193, .35); }
+.btn-login:disabled { background: var(--at-navy); border-color: var(--at-navy); color: #fff; opacity: .85; }
+
+.authorized { font-size: .7rem; color: var(--at-text-muted); }
+.alert-login { font-size: .78rem; border-radius: 8px; padding: .6rem .85rem; margin-bottom: 1rem; }
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+@media (max-width: 991.98px) {
+    .login-panel { min-height: 100vh; }
+    .login-card { padding: 1.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .login-card { animation: none; }
+    * { transition: none !important; }
+}

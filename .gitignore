@@ -1,0 +1,3 @@
+config/gemini.php
+uploads/*
+!uploads/.htaccess

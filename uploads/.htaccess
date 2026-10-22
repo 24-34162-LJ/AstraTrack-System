@@ -1,0 +1,5 @@
+# Uploaded shipping documents: never list the folder, never run scripts from it
+Options -Indexes
+<FilesMatch "\.(php|phtml|phar|pl|cgi)$">
+    Require all denied
+</FilesMatch>
