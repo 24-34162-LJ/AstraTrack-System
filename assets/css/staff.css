@@ -46,6 +46,10 @@ button { font: inherit; cursor: pointer; }
     top: 0;
     height: 100vh;
     flex: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(217, 228, 243, .35) transparent;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 0 28px 10px; }
 .brand-logo {
@@ -67,6 +71,7 @@ button { font: inherit; cursor: pointer; }
 }
 .menu-item:hover { background: rgba(255, 255, 255, .08); }
 .menu-item.active { background: var(--blue); color: #fff; font-weight: 500; }
+.menu-item:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .sidebar-bottom { margin-top: auto; border-top: 1px solid rgba(255, 255, 255, .12); padding-top: 16px; }
 .sidebar-user { display: flex; align-items: center; gap: 12px; padding: 0 12px 12px; }
 .sidebar-user .avatar { width: 40px; height: 40px; background: var(--blue); font-size: 13px; }
@@ -88,6 +93,31 @@ button { font: inherit; cursor: pointer; }
     font-size: 24px; color: var(--navy); margin-bottom: 6px;
 }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
+.notification-menu { position: relative; }
+.notification-toggle { position: relative; }
+.notification-count { position: absolute; top: -6px; right: -7px; display: grid; min-width: 18px; height: 18px; padding: 0 4px; place-items: center; border: 2px solid #fff; border-radius: 999px; color: #fff; background: #c54148; font-size: 9px; font-weight: 700; line-height: 14px; }
+.notification-preview { position: absolute; z-index: 1000; top: calc(100% + 12px); right: -12px; width: min(370px, calc(100vw - 28px)); border: 1px solid #dfe7ef; border-radius: 13px; background: #fff; box-shadow: 0 18px 42px rgba(22, 58, 95, .2); }
+.notification-preview[hidden] { display: none; }
+.notification-preview > header, .notification-preview > footer { display: flex; align-items: center; justify-content: space-between; padding: 13px 15px; }
+.notification-preview > header { border-bottom: 1px solid #e8edf2; color: #163a5f; font-size: 13px; }
+.notification-preview a { color: #2878b5; font-size: 11px; font-weight: 600; text-decoration: none; }
+.notification-preview ul { max-height: 360px; overflow-y: auto; list-style: none; }
+.notification-preview li { border-bottom: 1px solid #edf1f5; }
+.notification-preview li.is-unread { background: #f2f8fd; }
+.notification-preview li > a { display: grid; gap: 4px; padding: 12px 15px; color: #53697e; font-weight: 400; }
+.notification-preview li strong { color: #203e5c; font-size: 12px; font-weight: 600; }
+.notification-preview li span { font-size: 11px; line-height: 16px; }
+.notification-preview li small { color: #8291a0; font-size: 10px; }
+.notification-preview-empty { padding: 22px 15px; color: #788999; font-size: 12px; text-align: center; }
+.notification-preview > footer { justify-content: center; border-top: 1px solid #edf1f5; }
+.dashboard-attention { margin: 0 0 22px; }
+.attention-list { display: grid; gap: 8px; }
+.attention-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--navy); }
+.attention-row:hover { background: #f7fafe; }
+.attention-row > span:first-child { display: grid; gap: 2px; }
+.attention-row small { color: var(--muted); }
+.attention-date { flex: none; color: #2878b5; font-size: 12px; font-weight: 600; }
+.attention-date.is-overdue { color: #b4232a; }
 
 .icon-btn {
     position: relative; width: 42px; height: 42px; border-radius: 50%;
@@ -291,7 +321,11 @@ a.page-btn:hover { background: #f1f5fa; }
 @media (max-width: 860px) {
     .sidebar {
         position: fixed; z-index: 20; left: 0; top: 0;
+        width: min(var(--sidebar-w), calc(100vw - 48px));
+        height: 100vh; height: 100dvh;
+        padding-top: max(24px, env(safe-area-inset-top));
         transform: translateX(-100%); transition: transform .25s;
+        box-shadow: 18px 0 36px rgba(10, 29, 51, .2);
     }
     .sidebar.open { transform: none; }
     body.nav-open::after {          /* dim the page behind the open menu */

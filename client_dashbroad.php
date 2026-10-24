@@ -6,6 +6,7 @@
  */
 session_start();
 require_once 'config/database.php';   // gives you $conn (PDO)
+require_once 'function/shipment_stages.php';   // statusInfo(), statusGroups()
 
 /* ------------------------------------------------------------------
  * 1) ACCESS CONTROL — only logged-in clients may open this page
@@ -48,20 +49,7 @@ function money($value) {
     return 'PHP ' . number_format($value, floor($value) == $value ? 0 : 2);
 }
 
-/* shipments.current_status is free text, so it is grouped into the 4 labels of the design
- * (same grouping as admin.php). Edit the lists if you use other wording. */
-function statusInfo($status) {
-    $s = strtolower(trim((string)$status));
-    if ($s === 'documents received')
-        return ['Pending Documents', 'amber'];
-    if (in_array($s, ['declaration filed', 'assessment', 'duties paid', 'examination', 'released/cleared'], true))
-        return ['Customs Processing', 'blue'];
-    if (in_array($s, ['in transit', 'trucking'], true))
-        return ['In Transit', 'teal'];
-    if ($s === 'delivered')
-        return ['Delivered', 'green'];
-    return [$status !== '' ? $status : 'Unknown', 'blue'];
-}
+/* Status wording and badge colours come from the shipment_stages table (function/shipment_stages.php). */
 
 function paymentInfo($status) {
     switch ($status) {
@@ -159,7 +147,7 @@ if (($_GET['ajax'] ?? '') === 'track') {
         'Bill of Lading/AWB' => $s['bl_awb_no'],
         'Shipper'            => $s['shipper_name'],
         'Consignee'          => $s['consignee_name'],
-        'Vessel / Flight'    => $s['vessel_or_flight'],
+        ($s['mode'] === 'land' ? 'Truck Plate' : ($s['mode'] === 'air' ? 'Airline / Flight' : 'Vessel / Voyage')) => $s['vessel_or_flight'],
         'Port of loading'    => $s['port_of_loading'],
         'Port of discharge'  => $s['port_of_discharge'],
         'Incoterm'           => $s['incoterm'],
@@ -276,7 +264,7 @@ $bills = $stmt->fetchAll();
 $activePage = 'dashboard';
 $menu = [
     'dashboard'    => ['Dashboard',            'client_dashbroad.php',  'grid'],
-    'shipments'    => ['My Shipments',         'client_shipments.php',  'box'],
+    'shipments'    => ['My Shipments',         'clint_shipment.php',  'box'],
     'billing'      => ['My Billing & Payments','client_billing.php',    'billing'],
     'transactions' => ['My Transactions',      'client_transactions.php','swap'],
     'profile'      => ['My Profile',           'client_profile.php',    'user'],
@@ -394,7 +382,7 @@ $billTo   = ($billPage - 1) * $perPage + count($bills);
             <article class="card" id="shipments">
                 <div class="card-head">
                     <h2>My Recent Shipments</h2>
-                    <a href="client_shipments.php" class="link">View all</a>
+                    <a href="clint_shipment.php" class="link">View all</a>
                 </div>
                 <div class="table-wrap">
                     <table>

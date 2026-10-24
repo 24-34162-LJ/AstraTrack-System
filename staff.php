@@ -6,6 +6,8 @@
  */
 session_start();
 require_once 'config/database.php';   // gives you $conn (PDO)
+require_once 'function/shipment_stages.php';   // statusInfo(), statusGroups()
+require_once 'function/notifications.php';
 
 /* ------------------------------------------------------------------
  * 1) ACCESS CONTROL — only logged-in staff may open this page
@@ -15,6 +17,7 @@ if (empty($_SESSION['user']) || $_SESSION['user']['role'] !== 'staff') {
     exit;
 }
 $currentUser = $_SESSION['user'];
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $userId      = (int)($currentUser['id'] ?? $currentUser['user_id'] ?? 0);
 
 // Make sure the account still exists and is active
@@ -35,26 +38,14 @@ function e($text) { return htmlspecialchars((string)$text, ENT_QUOTES, 'UTF-8');
 function fmtDate($value, $withYear = true) {
     return $value ? date($withYear ? 'M d, Y' : 'M d', strtotime($value)) : '—';
 }
+function fmtDateTime($value) { return $value ? date('M d, Y · g:i A', strtotime((string)$value)) : '—'; }
 
 function money($value) {
     $value = (float)$value;
     return 'PHP ' . number_format($value, floor($value) == $value ? 0 : 2);
 }
 
-/* shipments.current_status is free text, so it is grouped into the labels of the design
- * (same grouping as admin.php). Edit the lists if you use other wording. */
-function statusInfo($status) {
-    $s = strtolower(trim((string)$status));
-    if ($s === 'documents received')
-        return ['Pending Documents', 'amber'];
-    if (in_array($s, ['declaration filed', 'assessment', 'duties paid', 'examination', 'released/cleared'], true))
-        return ['Customs Processing', 'blue'];
-    if (in_array($s, ['in transit', 'trucking'], true))
-        return [$s === 'trucking' ? 'Trucking' : 'In Transit', 'teal'];
-    if ($s === 'delivered')
-        return ['Delivered', 'green'];
-    return [$status !== '' ? $status : 'Unknown', 'blue'];
-}
+/* Status wording and badge colours come from the shipment_stages table (function/shipment_stages.php). */
 
 function paymentInfo($status) {
     switch ($status) {
@@ -213,7 +204,7 @@ if (($_GET['ajax'] ?? '') === 'track') {
 $row = $conn->query(
     "SELECT COUNT(*) AS total,
             COALESCE(SUM(LOWER(TRIM(current_status)) = 'delivered'), 0) AS delivered
-     FROM shipments"
+     FROM shipments WHERE archived_at IS NULL"
 )->fetch();
 $totalShipments = (int)$row['total'];
 $completed      = (int)$row['delivered'];
@@ -221,6 +212,13 @@ $ongoing        = $totalShipments - $completed;
 
 // Outstanding = billed minus VERIFIED payments (the view v_billing_balance already does this)
 $outstanding = (float)$conn->query("SELECT COALESCE(SUM(GREATEST(balance, 0)), 0) FROM v_billing_balance")->fetchColumn();
+$needsAttentionStmt = $conn->prepare("SELECT shipment_id, reference_no, current_status, eta_date, delivery_due_date,
+        (delivery_due_date < CURDATE() AND LOWER(TRIM(current_status)) NOT IN ('delivered','cancelled')) AS is_overdue
+    FROM shipments WHERE assigned_staff_id = ? AND archived_at IS NULL AND LOWER(TRIM(current_status)) NOT IN ('delivered','cancelled')
+      AND ((eta_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)) OR delivery_due_date < CURDATE())
+    ORDER BY is_overdue DESC, COALESCE(delivery_due_date, eta_date) ASC LIMIT 8");
+$needsAttentionStmt->execute([$userId]);
+$needsAttention = $needsAttentionStmt->fetchAll();
 
 /* ------------------------------------------------------------------
  * 5) RECENT SHIPMENTS (8 per page, optional search from the top bar)
@@ -231,8 +229,10 @@ $params = [];
 if ($search !== '') {
     $like  = '%' . addcslashes($search, '%_\\') . '%';
     // a named placeholder can only be used once when real prepared statements are on, so each gets its own name
-    $where = "WHERE s.reference_no LIKE :q1 OR c.client_name LIKE :q2 OR s.bl_awb_no LIKE :q3";
+    $where = "WHERE s.archived_at IS NULL AND (s.reference_no LIKE :q1 OR c.client_name LIKE :q2 OR s.bl_awb_no LIKE :q3)";
     $params = [':q1' => $like, ':q2' => $like, ':q3' => $like];
+} else {
+    $where = "WHERE s.archived_at IS NULL";
 }
 
 $stmt = $conn->prepare("SELECT COUNT(*) FROM shipments s JOIN clients c ON c.client_id = s.client_id $where");
@@ -313,7 +313,7 @@ $bills = $stmt->fetchAll();
 $activePage = 'dashboard';
 $menu = [
     'dashboard'    => ['Dashboard',              'staff.php',        'grid'],
-    'shipments'    => ['Shipment Management',    'shipments.php',    'box'],
+    'shipments'    => ['Shipment Management',    'staff_shipment.php', 'box'],
     'clients'      => ['Client Management',      'clients.php',      'users'],
     'billing'      => ['Billing & Payments',     'billing.php',      'billing'],
     'transactions' => ['Transaction Management', 'transactions.php', 'swap'],
@@ -333,11 +333,13 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf" content="<?= e($_SESSION['csrf']) ?>">
     <title>Staff Dashboard | AstraTrack</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/staff.css">
+    <link rel="stylesheet" href="assets/css/staff.css?v=20261024-3">
+    <link rel="stylesheet" href="assets/css/notifications.css">
 </head>
 <body>
 
@@ -353,7 +355,7 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
         <p class="menu-title">MENU</p>
         <nav class="menu">
             <?php foreach ($menu as $key => [$label, $href, $ico]): ?>
-                <a href="<?= e($href) ?>" class="menu-item <?= $key === $activePage ? 'active' : '' ?>">
+                <a href="<?= e($href) ?>" class="menu-item <?= $key === $activePage ? 'active' : '' ?>"<?= $key === $activePage ? ' aria-current="page"' : '' ?>>
                     <?= icon($ico) ?><span><?= e($label) ?></span>
                 </a>
             <?php endforeach; ?>
@@ -386,7 +388,7 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
                     <?= icon('search') ?>
                     <input type="text" name="q" value="<?= e($search) ?>" placeholder="Search shipments or clients" aria-label="Search shipments or clients">
                 </form>
-                <button class="icon-btn" aria-label="Notifications"><?= icon('bell') ?><?php if ($hasRecentUpdate): ?><i class="dot"></i><?php endif; ?></button>
+                <?php renderNotificationBell($conn, $userId, 'staff'); ?>
                 <div class="profile">
                     <span class="avatar"><?= e($initials) ?></span>
                     <strong><?= e($fullName) ?></strong>
@@ -394,6 +396,11 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
                 </div>
             </div>
         </header>
+
+        <section class="card dashboard-attention">
+            <div class="card-head"><h2>Needs Attention</h2><a class="link" href="staff_shipment.php?arrival=overdue">View shipments</a></div>
+            <?php if (!$needsAttention): ?><p class="muted">No upcoming arrivals or overdue deliveries.</p><?php else: ?><div class="attention-list"><?php foreach ($needsAttention as $item): ?><a class="attention-row" href="shipment_view.php?id=<?= (int)$item['shipment_id'] ?>"><span><strong><?= e($item['reference_no']) ?></strong><small><?= e($item['current_status']) ?></small></span><span class="attention-date <?= $item['is_overdue'] ? 'is-overdue' : '' ?>"><?= $item['is_overdue'] ? 'Delivery overdue' : 'ETA ' . e(fmtDate($item['eta_date'])) ?></span></a><?php endforeach; ?></div><?php endif; ?>
+        </section>
 
         <!-- ============ STAT CARDS ============ -->
         <section class="stats">
@@ -427,7 +434,7 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
                 <article class="card" id="shipments">
                     <div class="card-head">
                         <h2>Recent Shipments</h2>
-                        <a href="shipments.php" class="link">View all</a>
+                        <a href="staff_shipment.php" class="link">View all</a>
                     </div>
                     <div class="table-wrap">
                         <table>
@@ -571,5 +578,6 @@ $billTo   = ($billPage - 1) * $billPerPage + count($bills);
 </dialog>
 
 <script src="assets/js/staff.js"></script>
+<script src="assets/js/notifications.js"></script>
 </body>
 </html>

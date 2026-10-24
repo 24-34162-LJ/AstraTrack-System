@@ -1,3 +1,4 @@
 config/gemini.php
+config/database.local.php
 uploads/*
 !uploads/.htaccess

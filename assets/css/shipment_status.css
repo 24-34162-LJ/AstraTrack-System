@@ -1,0 +1,130 @@
+/* shipment_status.css — Update Status modal, toast and the On Hold / Cancelled timeline entries
+ * Used by shipment_view.php (modal + toast) and, for the .tl-hold / .tl-cancelled dots, clint_shipment.php.
+ * Colours: navy #163a5f, blue #2878b5, grey #f4f6f8. Headings Poppins, body Inter (same as shipments.css). */
+
+/* ---------- On Hold / Cancelled entry in the vertical timeline ---------- */
+.tl-hold .tl-dot      { background: #fff; border: 2px solid #e0a030; }
+.tl-hold .tl-dot::after      { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #e0a030; }
+.tl-cancelled .tl-dot { background: #fff; border: 2px solid #c0353a; }
+.tl-cancelled .tl-dot::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #c0353a; }
+
+/* ---------- Modal shell ---------- */
+.sdlg {
+    position: fixed; top: 50%; left: 50%; right: auto; bottom: auto;
+    margin: 0; transform: translate(-50%, -50%);
+    border: 0; border-radius: 16px; padding: 0; color: #163a5f;
+    width: min(540px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+    box-shadow: 0 20px 48px rgba(22, 58, 95, .28);
+    font-family: "Inter", system-ui, sans-serif;
+}
+.sdlg[open] { display: flex; flex-direction: column; }
+.sdlg::backdrop { background: rgba(22, 58, 95, .45); }
+
+.sdlg-head { padding: 24px 24px 16px; border-bottom: 1px solid #e4e9f0; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.sdlg-head h2 { font: 600 20px/28px "Poppins", "Inter", sans-serif; color: #163a5f; }
+.sdlg-sub { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 13px; line-height: 20px; color: #4b5d6e; flex-wrap: wrap; }
+.sdlg-sub strong { color: #163a5f; font-weight: 600; font-size: 14px; }
+.sdlg-x {
+    flex: none; width: 36px; height: 36px; border: 0; border-radius: 10px; background: #f4f6f8; color: #4b5d6e;
+    font-size: 20px; line-height: 1; cursor: pointer;
+}
+.sdlg-x:hover { background: #e4eaf0; color: #163a5f; }
+
+.sdlg-body { padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.sdlg-foot { padding: 16px 24px; border-top: 1px solid #e4e9f0; display: flex; justify-content: flex-end; gap: 12px; }
+.sdlg [hidden] { display: none !important; }
+
+/* ---------- Fields ---------- */
+.sf-field { display: flex; flex-direction: column; gap: 6px; }
+.sf-label { font-size: 14px; line-height: 20px; font-weight: 500; color: #163a5f; }
+.sf-label .req { color: #c0353a; margin-left: 2px; }
+.sf-label .hint { margin-left: 6px; font-size: 12px; font-weight: 400; color: #6b7c8d; }
+.sf-help { font-size: 12px; line-height: 16px; color: #4b5d6e; }
+.sf-help strong { color: #163a5f; font-weight: 600; margin-left: 4px; }
+
+.sdlg .select, .sdlg input[type=datetime-local], .sdlg input[type=date], .sdlg textarea {
+    width: 100%; font: 400 14px/20px "Inter", sans-serif; color: #163a5f; background-color: #fff;
+    border: 1.5px solid #b8c6d4; border-radius: 10px; padding: 11px 14px;
+}
+.sdlg .select { padding-right: 40px; }
+.sdlg textarea { min-height: 92px; resize: vertical; }
+.sdlg .select:focus, .sdlg input[type=datetime-local]:focus, .sdlg input[type=date]:focus, .sdlg textarea:focus { outline: 0; border-color: #2878b5; box-shadow: 0 0 0 3px rgba(40, 120, 181, .15); }
+.sdlg textarea::placeholder { color: #6b7c8d; }
+
+.sf-meta { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.sf-counter { flex: none; font-size: 12px; line-height: 16px; color: #4b5d6e; }
+.sf-counter.is-full { color: #c0353a; }
+
+.sf-field.has-error .select, .sf-field.has-error input, .sf-field.has-error textarea { border-color: #c0353a; }
+.sf-field.has-error .select:focus, .sf-field.has-error input:focus, .sf-field.has-error textarea:focus { box-shadow: 0 0 0 3px rgba(192, 53, 58, .15); }
+.sf-error { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 16px; color: #c0353a; }
+.sf-error::before {
+    content: "!"; flex: none; width: 14px; height: 14px; border: 1.5px solid #c0353a; border-radius: 50%;
+    font-size: 10px; line-height: 11px; font-weight: 700; text-align: center;
+}
+.sf-banner { padding: 10px 14px; border-radius: 10px; background: #fde7e8; color: #c0353a; font-size: 13px; line-height: 18px; }
+
+/* ---------- Notes inside the form ---------- */
+.sf-note { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px; background: #f4f6f8; font-size: 13px; line-height: 18px; color: #4b5d6e; }
+.sf-note a { color: #2878b5; font-weight: 500; text-decoration: none; }
+.sf-note a:hover { text-decoration: underline; }
+.sf-warn { background: #fdf1dc; color: #8a5a00; }
+.sf-closed { background: #e4eef7; color: #1f5f94; }
+
+/* ---------- Admin toggle: Correct a previous stage ---------- */
+.sf-correct { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 12px; background: #e4eef7; cursor: pointer; }
+.sf-correct strong { display: block; font-size: 14px; line-height: 20px; font-weight: 500; color: #163a5f; }
+.sf-correct small { display: block; font-size: 12px; line-height: 16px; color: #4b5d6e; }
+.sf-switch { position: relative; flex: none; width: 40px; height: 22px; }
+.sf-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.sf-switch span { position: absolute; inset: 0; border-radius: 999px; background: #b8c6d4; transition: background .15s; pointer-events: none; }
+.sf-switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sf-switch input:checked + span { background: #2878b5; }
+.sf-switch input:checked + span::after { transform: translateX(18px); }
+.sf-switch input:focus-visible + span { outline: 2px solid #163a5f; outline-offset: 2px; }
+
+/* ---------- Notify client ---------- */
+.sf-notify { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.sf-notify input { flex: none; width: 18px; height: 18px; margin-top: 1px; accent-color: #163a5f; }
+.sf-notify strong { display: block; font-size: 14px; line-height: 20px; font-weight: 500; color: #163a5f; }
+.sf-notify small { display: block; font-size: 12px; line-height: 16px; color: #4b5d6e; }
+
+/* ---------- Confirm Delivered ---------- */
+.sf-confirm { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 8px 0; }
+.sf-confirm-ico { width: 54px; height: 54px; border-radius: 50%; background: #e3f4e8; color: #1e6b3a; display: grid; place-items: center; }
+.sf-confirm-ico svg { width: 26px; height: 26px; }
+.sf-confirm h3 { font: 600 18px/26px "Poppins", "Inter", sans-serif; color: #163a5f; }
+.sf-confirm p { font-size: 14px; line-height: 20px; color: #4b5d6e; }
+.sf-confirm .sf-small { font-size: 12px; line-height: 16px; color: #6b7c8d; max-width: 360px; }
+.sf-flow { align-self: stretch; display: flex; justify-content: center; align-items: center; gap: 12px; padding: 14px; border-radius: 10px; background: #f4f6f8; flex-wrap: wrap; }
+.sf-flow .arrow { color: #4b5d6e; }
+
+/* ---------- Buttons (the page's .btn styles do the rest) ---------- */
+.sdlg .btn { cursor: pointer; font-family: "Inter", sans-serif; }
+.sdlg .btn[disabled] { opacity: .6; cursor: not-allowed; box-shadow: none; }
+.sf-spin { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border: 2px solid rgba(255, 255, 255, .4); border-top-color: #fff; border-radius: 50%; animation: sf-rot .7s linear infinite; }
+@keyframes sf-rot { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sf-spin { animation-duration: 2s; } .sf-switch span, .sf-switch span::after { transition: none; } }
+
+/* ---------- Toast ---------- */
+.sf-toast {
+    position: fixed; left: 284px; bottom: 24px; z-index: 1000; display: flex; gap: 12px; align-items: center;
+    max-width: min(420px, calc(100vw - 32px)); padding: 12px 18px 12px 14px; border-radius: 12px;
+    background: #163a5f; color: #fff; box-shadow: 0 10px 24px rgba(22, 58, 95, .35);
+    font-family: "Inter", sans-serif; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s, transform .2s;
+}
+.sf-toast.show { opacity: 1; transform: none; }
+.sf-toast .ico { flex: none; width: 24px; height: 24px; border-radius: 50%; background: #2e9e5b; display: grid; place-items: center; }
+.sf-toast .ico svg { width: 14px; height: 14px; stroke-width: 2.6; }
+.sf-toast.is-error .ico { background: #c0353a; }
+.sf-toast strong { display: block; font-size: 14px; line-height: 20px; font-weight: 600; }
+.sf-toast span.t { display: block; font-size: 12px; line-height: 16px; opacity: .85; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .sf-toast { left: 16px; right: 16px; } }
+@media (prefers-reduced-motion: reduce) { .sf-toast { transition: none; } }
+
+/* form wrappers inside the dialog (header + form, or header + confirm view) */
+.sdlg-form { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.status-badge-slot { display: inline-flex; }
+@media (max-width: 860px) {
+    .sdlg { left: 50%; }
+}

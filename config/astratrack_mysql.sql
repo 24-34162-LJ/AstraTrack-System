@@ -1,7 +1,11 @@
 -- =====================================================================
 -- AstraTrack: Customs Brokerage Shipment & Transaction Monitoring System
 -- MySQL schema (MySQL 5.7+ / 8.x, also works on MariaDB 10.3+)
--- Run:  mysql -u root -p < astratrack_mysql.sql
+-- Run:  mysql -u <admin user> -p < astratrack_mysql.sql
+--
+-- FRESH INSTALL ONLY. The next line drops the whole database. For an existing
+-- database use config/migrations/2026_10_shipment_cleanup.sql instead.
+-- Keep this file and the migration in step: any schema change goes in both.
 -- =====================================================================
 
 DROP DATABASE IF EXISTS astratrack;
@@ -42,6 +46,33 @@ CREATE TABLE users (
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
+-- 2b. shipment_stages (lookup: the one list of shipment statuses)
+-- stage_group is the label shown in tabs, badges and the stepper.
+-- shipments.current_status and shipment_status_updates.stage reference stage_name.
+-- ---------------------------------------------------------------------
+CREATE TABLE shipment_stages (
+    stage_id        INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    stage_name      VARCHAR(40)  NOT NULL,
+    stage_group     VARCHAR(40)  NOT NULL,
+    sort_order      SMALLINT UNSIGNED NOT NULL,
+    is_closed       TINYINT(1)   NOT NULL DEFAULT 0,
+    UNIQUE KEY uq_stage_name (stage_name),
+    KEY idx_stage_sort (sort_order)
+) ENGINE=InnoDB;
+
+INSERT INTO shipment_stages (stage_name, stage_group, sort_order, is_closed) VALUES
+('Documents received', 'Pending Documents',  10, 0),
+('Declaration filed',  'Customs Processing', 20, 0),
+('Assessment',         'Customs Processing', 30, 0),
+('Duties paid',        'Customs Processing', 40, 0),
+('Examination',        'Customs Processing', 50, 0),
+('Released/cleared',   'Customs Processing', 60, 0),
+('Trucking',           'In Transit',         70, 0),
+('Delivered',          'Delivered',          80, 1),
+('On Hold',            'On Hold',            90, 0),
+('Cancelled',          'Cancelled',         100, 1);
+
+-- ---------------------------------------------------------------------
 -- 3. shipments
 -- ---------------------------------------------------------------------
 CREATE TABLE shipments (
@@ -51,7 +82,7 @@ CREATE TABLE shipments (
     assigned_staff_id   INT UNSIGNED NULL,
     transaction_type    ENUM('import','export') NOT NULL,
     mode                ENUM('sea','air','land') NOT NULL,
-    bl_awb_no           VARCHAR(50),
+    bl_awb_no           VARCHAR(50) NULL,                   -- one shipment per B/L (UNIQUE below)
     shipper_name        VARCHAR(150),
     consignee_name      VARCHAR(150),
     vessel_or_flight    VARCHAR(100),
@@ -67,15 +98,31 @@ CREATE TABLE shipments (
     invoice_value       DECIMAL(15,2),                      -- invoice total
     freight_amount      DECIMAL(15,2),                      -- ocean freight
     fob_value           DECIMAL(15,2),
-    current_status      VARCHAR(40) NOT NULL DEFAULT 'Documents received',
+    current_status      VARCHAR(40) NOT NULL DEFAULT 'Documents received',  -- shipment_stages.stage_name
+    actual_arrival_date DATE NULL,
+    eta_date            DATE NULL,
+    first_free_day      DATE NULL,
+    delivery_due_date   DATE NULL,
+    archived_at         DATETIME NULL,
+    archived_by         INT UNSIGNED NULL,
+    archive_reason      VARCHAR(255) NULL,
+    remarks             TEXT NULL,
     created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_ship_client FOREIGN KEY (client_id)
         REFERENCES clients(client_id) ON UPDATE CASCADE,
     CONSTRAINT fk_ship_staff FOREIGN KEY (assigned_staff_id)
         REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ship_archived_by FOREIGN KEY (archived_by)
+        REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ship_stage FOREIGN KEY (current_status)
+        REFERENCES shipment_stages(stage_name) ON UPDATE CASCADE ON DELETE RESTRICT,
+    UNIQUE KEY uq_ship_bl (bl_awb_no),
     INDEX idx_ship_client (client_id),
-    INDEX idx_ship_bl     (bl_awb_no),
     INDEX idx_ship_status (current_status)
+    ,INDEX idx_ship_archived_at (archived_at)
+    ,INDEX idx_ship_eta (eta_date)
+    ,INDEX idx_ship_first_free_day (first_free_day)
+    ,INDEX idx_ship_delivery_due (delivery_due_date)
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
@@ -121,13 +168,12 @@ CREATE TABLE customs_processing (
 
 -- ---------------------------------------------------------------------
 -- 6. shipment_status_updates
--- stage values: Documents received, Declaration filed, Assessment,
---               Duties paid, Examination, Released/cleared, Trucking, Delivered
+-- stage must be a shipment_stages.stage_name (the 8 stages, On Hold, Cancelled)
 -- ---------------------------------------------------------------------
 CREATE TABLE shipment_status_updates (
     update_id       INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     shipment_id     INT UNSIGNED NOT NULL,
-    stage           VARCHAR(40) NOT NULL,
+    stage           VARCHAR(40) NOT NULL,                -- shipment_stages.stage_name
     status          VARCHAR(40) NOT NULL,
     remarks         VARCHAR(255),
     updated_by      INT UNSIGNED NULL,
@@ -136,7 +182,29 @@ CREATE TABLE shipment_status_updates (
         REFERENCES shipments(shipment_id) ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_status_user FOREIGN KEY (updated_by)
         REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_status_stage FOREIGN KEY (stage)
+        REFERENCES shipment_stages(stage_name) ON UPDATE CASCADE ON DELETE RESTRICT,
     INDEX idx_status_ship (shipment_id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Shipment notifications (per-user inbox, one row per intended recipient)
+-- ---------------------------------------------------------------------
+CREATE TABLE notifications (
+    notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id         INT UNSIGNED NOT NULL,
+    shipment_id     INT UNSIGNED NULL,
+    event_type      VARCHAR(40) NOT NULL,
+    title           VARCHAR(120) NOT NULL,
+    message         VARCHAR(255) NOT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at         DATETIME NULL,
+    CONSTRAINT fk_notification_user FOREIGN KEY (user_id)
+        REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_notification_ship FOREIGN KEY (shipment_id)
+        REFERENCES shipments(shipment_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    INDEX idx_notifications_user_created (user_id, created_at),
+    INDEX idx_notifications_user_read (user_id, read_at)
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
@@ -149,7 +217,9 @@ CREATE TABLE deliveries (
     plate_no            VARCHAR(20),
     driver_name         VARCHAR(100),
     delivery_address    VARCHAR(255),
+    receiving_contact   VARCHAR(150) NULL,
     scheduled_date      DATE,
+    scheduled_time      TIME NULL,
     delivered_date      DATE,
     status              ENUM('scheduled','in_transit','delivered','cancelled')
                         NOT NULL DEFAULT 'scheduled',
@@ -168,6 +238,7 @@ CREATE TABLE shipment_documents (
     shipment_id     INT UNSIGNED NOT NULL,
     doc_type        VARCHAR(40) NOT NULL,
     file_path       VARCHAR(255) NOT NULL,
+    remarks         VARCHAR(255) NULL,                      -- optional note saved with the upload
     uploaded_by     INT UNSIGNED NULL,
     uploaded_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_doc_ship FOREIGN KEY (shipment_id)
@@ -276,7 +347,6 @@ CREATE TABLE transaction_history (
 -- ---------------------------------------------------------------------
 -- 14. activity_log
 -- ---------------------------------------------------------------------
--- Run once in phpMyAdmin (SQL tab) with the `astratrack` database selected.
 -- Stores every important change so the dashboard's Recent Activity can show it.
 CREATE TABLE IF NOT EXISTS activity_log (
     activity_id        INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -285,6 +355,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
     performed_by       INT UNSIGNED NULL,
     performed_by_name  VARCHAR(100) NULL,               -- saved as text so it still shows after a user is deleted
     performed_by_role  VARCHAR(20)  NULL,
+    details_json       LONGTEXT NULL,                    -- optional field-level before/after details for shipment edits
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_activity_user FOREIGN KEY (performed_by)
         REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE CASCADE,
@@ -336,7 +407,7 @@ INSERT INTO shipments (
     'Laem Chabang, Thailand', 'Manila North Harbor', '8433.51.00',
     12, 36360.000, 286.320, 'CIP',
     'S037100369', 'USD', 201622.20, 2320.00,
-    199244.54, 'In transit'
+    199244.54, 'Trucking'
 );
 
 INSERT INTO containers (shipment_id, container_no, seal_no, size_type) VALUES
@@ -353,3 +424,14 @@ INSERT INTO shipment_documents (shipment_id, doc_type, file_path, uploaded_by) V
 (1, 'B/L or AWB', 'uploads/AST-2026-0001/ONEYBKKGW8554308_MLA.pdf', 2);
 
 INSERT INTO transactions (client_id, shipment_id, status) VALUES (1, 1, 'ongoing');
+
+-- =====================================================================
+-- APP DATABASE USER (shared / production deployments)
+-- Do not run the application as root with an empty password.
+-- Replace the password, run this as an admin, then put the same values in
+-- config/database.local.php (see config/database.local.sample.php).
+-- The app only needs data access; schema changes (migrations) use an admin account.
+-- =====================================================================
+-- CREATE USER 'astratrack_app'@'localhost' IDENTIFIED BY 'CHANGE_ME_long_random_password';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON astratrack.* TO 'astratrack_app'@'localhost';
+-- FLUSH PRIVILEGES;

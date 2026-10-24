@@ -6,7 +6,7 @@
  * Types used for the badge colours: 'Shipment Update', 'Billing Change', 'User Account' (anything else = blue)
  * Needs the activity_log table (activity_log.sql) and $_SESSION['user'] from your login.
  */
-function logActivity(PDO $pdo, string $type, string $description): void
+function logActivity(PDO $pdo, string $type, string $description, array $details = []): void
 {
     $u    = $_SESSION['user'] ?? [];
     $id   = (int)($u['user_id'] ?? $u['id'] ?? 0) ?: null;
@@ -14,6 +14,16 @@ function logActivity(PDO $pdo, string $type, string $description): void
     $role = $u['role'] ?? null;
 
     try {
+        if ($details) {
+            $json = json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            try {
+                $pdo->prepare("INSERT INTO activity_log (activity_type, description, performed_by, performed_by_name, performed_by_role, details_json)
+                               VALUES (?, ?, ?, ?, ?, ?)")->execute([$type, mb_substr($description, 0, 255), $id, $name, $role, $json]);
+                return;
+            } catch (PDOException $detailError) {
+                // Keep the activity entry on databases that have not run the optional detail migration yet.
+            }
+        }
         $pdo->prepare("INSERT INTO activity_log (activity_type, description, performed_by, performed_by_name, performed_by_role)
                        VALUES (?, ?, ?, ?, ?)")
             ->execute([$type, mb_substr($description, 0, 255), $id, $name, $role]);

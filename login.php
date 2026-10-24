@@ -7,6 +7,7 @@ require_once "config/database.php";
  * Requires: PHP 7.4+
  */
 session_start();
+require_once __DIR__ . '/function/log_activity.php';
 
 // Already logged in? Go straight to the dashboard.
 if (!empty($_SESSION['user'])) {
@@ -49,6 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'full_name' => $user['full_name'],
                 'role' => $user['role'],
                 ];
+
+            logActivity($conn, 'User Account', $user['full_name'] . ' logged in', [
+                'action' => 'login',
+                'role' => $user['role'],
+            ]);
 
             if (!empty($_POST['remember'])) {
                 // Keeps the session cookie for 30 days

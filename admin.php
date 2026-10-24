@@ -6,7 +6,9 @@
  *              (all from astratrack_mysql.sql)
  */
 session_start();
-require_once 'config/database.php';   // gives you $pdo
+require_once 'config/database.php';   // gives you $conn (PDO)
+require_once 'function/shipment_stages.php';   // statusGroups()
+require_once 'function/notifications.php';
 
 /* ------------------------------------------------------------------
  * 1) ACCESS CONTROL — only admins may open this page
@@ -20,12 +22,13 @@ if (empty($_SESSION['user']) || $_SESSION['user']['role'] !== 'admin') {
     exit;
 }
 $currentUser = $_SESSION['user'];
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 
 /* ------------------------------------------------------------------
  * 2) DASHBOARD NUMBERS (real data from the database)
  * ------------------------------------------------------------------ */
 $totalUsers     = (int)$conn->query("SELECT COUNT(*) FROM users")->fetchColumn();
-$totalShipments = (int)$conn->query("SELECT COUNT(*) FROM shipments")->fetchColumn();
+$totalShipments = (int)$conn->query("SELECT COUNT(*) FROM shipments WHERE archived_at IS NULL")->fetchColumn();
 $ongoingTxns    = (int)$conn->query("SELECT COUNT(*) FROM transactions WHERE status = 'ongoing'")->fetchColumn();
 
 // Outstanding = billed minus VERIFIED payments (the view v_billing_balance already does this)
@@ -34,21 +37,25 @@ $outstandingAmount = (float)$conn->query("SELECT COALESCE(SUM(GREATEST(balance, 
 /* ------------------------------------------------------------------
  * 3) SHIPMENT OVERVIEW
  * ------------------------------------------------------------------
- * shipments.current_status is free text (VARCHAR), so the stages are grouped
- * into the 4 bars of the design. Edit the lists below if you use other wording.
- * Statuses not listed here are not counted in the bars.
+ * The 4 bars of the design come from the shipment_stages table
+ * (stage_group): see statusGroups() in function/shipment_stages.php.
+ * On Hold and Cancelled shipments are not counted in the bars.
  */
-$statusGroups = [
-    ['label' => 'Pending Documents',  'class' => 'amber', 'stages' => ['documents received']],
-    ['label' => 'Customs Processing', 'class' => 'blue',  'stages' => ['declaration filed', 'assessment', 'duties paid', 'examination', 'released/cleared']],
-    ['label' => 'In Transit',         'class' => 'teal',  'stages' => ['in transit', 'trucking']],
-    ['label' => 'Delivered',          'class' => 'green', 'stages' => ['delivered']],
-];
+$statusGroups = [];
+foreach (statusGroups() as $g) {
+    $statusGroups[] = ['label' => $g[0], 'class' => $g[1], 'stages' => $g[2]];
+}
 
 $perStatus = [];   // e.g. ['in transit' => 13, ...]
-foreach ($conn->query("SELECT current_status, COUNT(*) AS c FROM shipments GROUP BY current_status") as $r) {
+foreach ($conn->query("SELECT current_status, COUNT(*) AS c FROM shipments WHERE archived_at IS NULL GROUP BY current_status") as $r) {
     $perStatus[strtolower(trim($r['current_status']))] = (int)$r['c'];
 }
+
+$needsAttention = $conn->query("SELECT shipment_id, reference_no, current_status, eta_date, delivery_due_date,
+        (delivery_due_date < CURDATE() AND LOWER(TRIM(current_status)) NOT IN ('delivered','cancelled')) AS is_overdue
+    FROM shipments WHERE archived_at IS NULL AND LOWER(TRIM(current_status)) NOT IN ('delivered','cancelled')
+      AND ((eta_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)) OR delivery_due_date < CURDATE())
+    ORDER BY is_overdue DESC, COALESCE(delivery_due_date, eta_date) ASC LIMIT 8")->fetchAll();
 
 $shipmentStatus = [];
 foreach ($statusGroups as $g) {
@@ -123,6 +130,8 @@ $menu = [
  * 7) HELPERS
  * ------------------------------------------------------------------ */
 function e($text) { return htmlspecialchars((string)$text, ENT_QUOTES, 'UTF-8'); }
+function fmtDate($value) { return $value ? date('M d, Y', strtotime((string)$value)) : '—'; }
+function fmtDateTime($value) { return $value ? date('M d, Y · g:i A', strtotime((string)$value)) : '—'; }
 
 function pct($value, $total) { return $total > 0 ? round($value / $total * 100, 1) : 0; }
 
@@ -161,11 +170,13 @@ $shipTotal = array_sum(array_column($shipmentStatus, 'count'));
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf" content="<?= e($_SESSION['csrf']) ?>">
     <title>Admin Dashboard | AstraTrack</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/admin.css">
+    <link rel="stylesheet" href="assets/css/admin.css?v=20261024-3">
+    <link rel="stylesheet" href="assets/css/notifications.css">
 </head>
 <body>
 
@@ -180,7 +191,7 @@ $shipTotal = array_sum(array_column($shipmentStatus, 'count'));
 
         <nav class="menu">
             <?php foreach ($menu as $key => [$label, $href, $ico]): ?>
-                <a href="<?= e($href) ?>" class="menu-item <?= $key === $activePage ? 'active' : '' ?>">
+                <a href="<?= e($href) ?>" class="menu-item <?= $key === $activePage ? 'active' : '' ?>"<?= $key === $activePage ? ' aria-current="page"' : '' ?>>
                     <?= icon($ico) ?><span><?= e($label) ?></span>
                 </a>
             <?php endforeach; ?>
@@ -216,7 +227,7 @@ $shipTotal = array_sum(array_column($shipmentStatus, 'count'));
                     <input type="text" name="q" placeholder="Search records or users">
                 </form>
 
-                <button class="icon-btn" aria-label="Notifications"><?= icon('bell') ?><i class="dot"></i></button>
+                <?php renderNotificationBell($conn, (int)($currentUser['id'] ?? $currentUser['user_id'] ?? 0), 'admin'); ?>
 
                 <div class="profile">
                     <span class="avatar"><?= e($initials) ?></span>
@@ -306,6 +317,11 @@ $shipTotal = array_sum(array_column($shipmentStatus, 'count'));
             </article>
         </section>
 
+        <section class="card dashboard-attention">
+            <div class="card-head"><h2>Needs Attention</h2><a class="link" href="shipments.php?arrival=overdue">View shipments</a></div>
+            <?php if (!$needsAttention): ?><p class="muted">No upcoming arrivals or overdue deliveries.</p><?php else: ?><div class="attention-list"><?php foreach ($needsAttention as $item): ?><a class="attention-row" href="shipment_view.php?id=<?= (int)$item['shipment_id'] ?>"><span><strong><?= e($item['reference_no']) ?></strong><small><?= e($item['current_status']) ?></small></span><span class="attention-date <?= $item['is_overdue'] ? 'is-overdue' : '' ?>"><?= $item['is_overdue'] ? 'Delivery overdue' : 'ETA ' . e(fmtDate($item['eta_date'])) ?></span></a><?php endforeach; ?></div><?php endif; ?>
+        </section>
+
         <!-- ============ RECENT ACTIVITY ============ -->
         <section class="card activity">
             <div class="card-head">
@@ -339,5 +355,6 @@ $shipTotal = array_sum(array_column($shipmentStatus, 'count'));
 </div>
 
 <script src="assets/js/admin.js"></script>
+<script src="assets/js/notifications.js"></script>
 </body>
 </html>

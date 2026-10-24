@@ -14,6 +14,7 @@
 session_start();
 require_once 'config/database.php';        // $conn (PDO)
 require_once 'function/log_activity.php';  // logActivity()
+require_once 'function/notifications.php';
 
 /* ------------------------------------------------------------------
  * 1) HELPERS
@@ -80,22 +81,27 @@ function uploadedPdf(): string
     return $tmp;
 }
 
+// Manual entry may omit the PDF; if one was selected, apply the same file validation as extraction.
+function optionalUploadedPdf(): ?string
+{
+    $f = $_FILES['file'] ?? null;
+    if (!$f || ($f['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) return null;
+    if (($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) jsonOut(400, ['error' => 'The PDF upload did not complete. Check the PHP upload limits and try again.']);
+    $tmp = (string)$f['tmp_name'];
+    if (!is_uploaded_file($tmp)) jsonOut(400, ['error' => 'Invalid upload.']);
+    if ((int)$f['size'] > 25 * 1024 * 1024) jsonOut(400, ['error' => 'The file is larger than 25 MB.']);
+    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp);
+    $head = (string)file_get_contents($tmp, false, null, 0, 5);
+    if ($mime !== 'application/pdf' || $head !== '%PDF-') jsonOut(400, ['error' => 'Only PDF files are accepted.']);
+    return $tmp;
+}
+
 function safeFileName(string $name): string
 {
     $base = (string)pathinfo($name, PATHINFO_FILENAME);
     $base = trim((string)preg_replace('/[^A-Za-z0-9._-]+/', '_', $base), '._-');
     if ($base === '') $base = 'shipping_documents';
     return substr($base, 0, 80) . '.pdf';
-}
-
-function columnExists(PDO $conn, string $table, string $column): bool
-{
-    $st = $conn->prepare(
-        "SELECT COUNT(*) FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?"
-    );
-    $st->execute([$table, $column]);
-    return (int)$st->fetchColumn() > 0;
 }
 
 // AST-2026-0001 style. Call inside a transaction (locks the rows it reads).
@@ -400,6 +406,16 @@ if ($ajax === 'extract') {
     jsonOut(200, ['form' => $form, 'checks' => runChecks($raw), 'warnings' => $warnings]);
 }
 
+if ($ajax === 'check-bl') {
+    requirePost();
+    $bl = cleanStr($_POST['bl_awb_no'] ?? null, 50);
+    if ($bl === null) jsonOut(200, ['duplicate' => false]);
+    $st = $conn->prepare('SELECT reference_no FROM shipments WHERE bl_awb_no = ? LIMIT 1');
+    $st->execute([$bl]);
+    $reference = $st->fetchColumn();
+    jsonOut(200, ['duplicate' => $reference !== false, 'reference_no' => $reference === false ? null : $reference]);
+}
+
 /* ------------------------------------------------------------------
  * 5) AJAX: save
  * ------------------------------------------------------------------ */
@@ -410,7 +426,7 @@ if ($ajax === 'save') {
     if (!is_array($in)) {
         jsonOut(400, ['error' => 'No shipment data was received.']);
     }
-    $tmp = uploadedPdf();
+    $tmp = optionalUploadedPdf();
     $errors = [];
 
     // --- client / type / mode ---
@@ -427,10 +443,11 @@ if ($ajax === 'save') {
 
     // --- text fields (cut to the column length) ---
     $bl = cleanStr($in['bl_awb_no'] ?? null, 50);
-    if ($bl === null) $errors[] = 'The B/L or AWB number is required.';
+    if ($bl === null && $mode !== 'land') $errors[] = 'The B/L or AWB number is required.';
     $shipper   = cleanStr($in['shipper_name'] ?? null, 150);
     $consignee = cleanStr($in['consignee_name'] ?? null, 150);
     $vessel    = cleanStr($in['vessel_or_flight'] ?? null, 100);
+    if ($mode === 'land' && $vessel === null) $errors[] = 'The truck plate is required for land shipments.';
     $pol       = cleanStr($in['port_of_loading'] ?? null, 100);
     $pod       = cleanStr($in['port_of_discharge'] ?? null, 100);
     $hs        = cleanStr($in['hs_code'] ?? null, 20);
@@ -468,7 +485,7 @@ if ($ajax === 'save') {
     // --- containers ---
     $containers = [];
     $seen = [];
-    $rows = is_array($in['containers'] ?? null) ? array_slice($in['containers'], 0, 200) : [];
+    $rows = $mode === 'sea' && is_array($in['containers'] ?? null) ? array_slice($in['containers'], 0, 200) : [];
     foreach ($rows as $i => $c) {
         if (!is_array($c)) continue;
         $no   = cleanStr($c['container_no'] ?? null, 20);
@@ -495,7 +512,6 @@ if ($ajax === 'save') {
     }
 
     $dec = function (?float $n, int $d): ?string { return $n === null ? null : number_format($n, $d, '.', ''); };
-    $hasRemarks = columnExists($conn, 'shipments', 'remarks');
     $staffId    = $role === 'staff' ? $userId : null;
 
     $ref = '';
@@ -513,16 +529,12 @@ if ($ajax === 'save') {
                      'bl_awb_no', 'shipper_name', 'consignee_name', 'vessel_or_flight',
                      'port_of_loading', 'port_of_discharge', 'hs_code',
                      'total_packages', 'total_gross_weight', 'measurement_cbm', 'incoterm',
-                     'invoice_no', 'currency', 'invoice_value', 'freight_amount', 'fob_value', 'current_status'];
+                     'invoice_no', 'currency', 'invoice_value', 'freight_amount', 'fob_value', 'current_status', 'remarks'];
             $vals = [$ref, $clientId, $staffId, $type, $mode,
                      $bl, $shipper, $consignee, $vessel,
                      $pol, $pod, $hs,
                      $packages === null ? null : (int)round($packages), $dec($weight, 3), $dec($cbm, 3), $incoterm,
-                     $invoiceNo, $currency, $dec($invValue, 2), $dec($freight, 2), $dec($fob, 2), 'Documents received'];
-            if ($hasRemarks) {
-                $cols[] = 'remarks';
-                $vals[] = $remarks;
-            }
+                     $invoiceNo, $currency, $dec($invValue, 2), $dec($freight, 2), $dec($fob, 2), 'Documents received', $remarks];
             $sql = 'INSERT INTO shipments (' . implode(', ', $cols) . ') VALUES ('
                  . implode(', ', array_fill(0, count($cols), '?')) . ')';
             $conn->prepare($sql)->execute($vals);
@@ -536,27 +548,27 @@ if ($ajax === 'save') {
 
             // first timeline entry
             $conn->prepare("INSERT INTO shipment_status_updates (shipment_id, stage, status, remarks, updated_by) VALUES (?, ?, ?, ?, ?)")
-                 ->execute([$shipmentId, 'Documents received', 'Completed', 'Shipment created from the uploaded shipping documents.', $userId]);
+                 ->execute([$shipmentId, 'Documents received', 'Completed', $tmp !== null ? 'Shipment created from the uploaded shipping documents.' : 'Shipment created from manual entry.', $userId]);
 
-            // keep the PDF: uploads/<reference>/<file>.pdf
-            $destDir = __DIR__ . '/uploads/' . $ref;
-            if (!is_dir($destDir) && !mkdir($destDir, 0775, true)) {
-                throw new RuntimeException('Could not create the uploads folder.');
+            // Keep an uploaded source PDF with the shipment when one is provided.
+            if ($tmp !== null) {
+                $destDir = __DIR__ . '/uploads/' . $ref;
+                if (!is_dir($destDir) && !mkdir($destDir, 0775, true)) throw new RuntimeException('Could not create the uploads folder.');
+                $fileName = safeFileName((string)($_FILES['file']['name'] ?? ''));
+                $destAbs  = $destDir . '/' . $fileName;
+                if (!copy($tmp, $destAbs)) throw new RuntimeException('Could not store the PDF file.');
+                $conn->prepare("INSERT INTO shipment_documents (shipment_id, doc_type, file_path, uploaded_by) VALUES (?, ?, ?, ?)")
+                     ->execute([$shipmentId, 'B/L or AWB', 'uploads/' . $ref . '/' . $fileName, $userId]);
             }
-            $fileName = safeFileName((string)($_FILES['file']['name'] ?? ''));
-            $destAbs  = $destDir . '/' . $fileName;
-            if (!copy($tmp, $destAbs)) {
-                throw new RuntimeException('Could not store the PDF file.');
-            }
-            $conn->prepare("INSERT INTO shipment_documents (shipment_id, doc_type, file_path, uploaded_by) VALUES (?, ?, ?, ?)")
-                 ->execute([$shipmentId, 'B/L or AWB', 'uploads/' . $ref . '/' . $fileName, $userId]);
 
             // transaction record + its first history line
             $conn->prepare("INSERT INTO transactions (client_id, shipment_id, status) VALUES (?, ?, 'pending')")
                  ->execute([$clientId, $shipmentId]);
             $transactionId = (int)$conn->lastInsertId();
+            $historyText = "Shipment $ref created by " . ($tmp !== null ? 'document review' : 'manual entry');
+            if ($bl !== null) $historyText .= " (B/L or AWB $bl)";
             $conn->prepare("INSERT INTO transaction_history (transaction_id, event_type, description, performed_by) VALUES (?, ?, ?, ?)")
-                 ->execute([$transactionId, 'Shipment created', "Shipment $ref created from uploaded documents (B/L $bl).", $userId]);
+                 ->execute([$transactionId, 'Shipment created', $historyText . '.', $userId]);
 
             $conn->commit();
             break;
@@ -567,16 +579,23 @@ if ($ajax === 'save') {
             if ($destDir !== null && is_dir($destDir)) @rmdir($destDir);
             $destAbs = $destDir = null;
 
-            // Two staff saving at the same second can pick the same reference number: try again
             $dupKey = ($ex instanceof PDOException) && isset($ex->errorInfo[1]) && (int)$ex->errorInfo[1] === 1062;
+
+            // Same B/L saved by someone else a moment ago (UNIQUE uq_ship_bl): do not retry
+            if ($dupKey && strpos((string)($ex->errorInfo[2] ?? ''), 'uq_ship_bl') !== false) {
+                jsonOut(422, ['error' => "B/L $bl is already saved on another shipment.", 'errors' => ["B/L $bl is already saved on another shipment."]]);
+            }
+
+            // Two staff saving at the same second can pick the same reference number: try again
             if ($dupKey && $attempt < 3) continue;
 
             error_log('shipment_add save failed: ' . $ex->getMessage());
-            jsonOut(500, ['error' => 'The shipment could not be saved.', 'detail' => $ex->getMessage()]);
+            jsonOut(500, ['error' => 'The shipment could not be saved. Please try again.']);
         }
     }
 
-    logActivity($conn, 'Shipment Update', "Shipment $ref created from uploaded documents ($clientName, B/L $bl)");
+    logActivity($conn, 'Shipment Update', "Shipment $ref created from " . ($tmp !== null ? 'uploaded documents' : 'manual entry') . " ($clientName" . ($bl !== null ? ", B/L or AWB $bl" : '') . ")");
+    createShipmentNotifications($conn, ['shipment_id' => $shipmentId, 'client_id' => $clientId, 'assigned_staff_id' => $staffId], 'created', 'Shipment created', $ref . ' was created and is awaiting documents.', $userId);
 
     jsonOut(200, ['ok' => true, 'reference_no' => $ref, 'shipment_id' => $shipmentId]);
 }
@@ -585,7 +604,6 @@ if ($ajax === 'save') {
  * 6) PAGE
  * ------------------------------------------------------------------ */
 $clients    = $conn->query("SELECT client_id, client_name FROM clients WHERE status = 'active' ORDER BY client_name")->fetchAll();
-$hasRemarks = columnExists($conn, 'shipments', 'remarks');
 
 function icon($name) {
     $paths = [
@@ -620,7 +638,7 @@ if ($role === 'admin') {
 } else {
     $menu = [
         'dashboard'    => ['Dashboard',              'staff.php',           'grid'],
-        'shipments'    => ['Shipment Management',    'shipments.php',       'box'],
+        'shipments'    => ['Shipment Management',    'staff_shipment.php',  'box'],
         'clients'      => ['Client Management',      'clients.php',         'users'],
         'billing'      => ['Billing & Payments',     'billing.php',         'billing'],
         'transactions' => ['Transaction Management', 'transactions.php',    'swap'],
@@ -640,9 +658,9 @@ $initials = strtoupper(substr($words[0], 0, 1) . (isset($words[1]) ? substr($wor
     <title>Add Shipment | AstraTrack</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="assets/css/staff.css">
-    <link rel="stylesheet" href="assets/css/shipment_add.css">
+    <link rel="stylesheet" href="assets/css/shipment_add.css?v=20261024-2">
 </head>
 <body>
 
@@ -683,7 +701,7 @@ $initials = strtoupper(substr($words[0], 0, 1) . (isset($words[1]) ? substr($wor
             <div>
                 <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">&#9776;</button>
                 <h1>Add Shipment</h1>
-                <p>Upload the shipping documents, review the extracted data, then save.</p>
+                <p>Create a shipment manually or start with a PDF document draft.</p>
             </div>
             <div class="topbar-right">
                 <div class="profile">
@@ -694,172 +712,151 @@ $initials = strtoupper(substr($words[0], 0, 1) . (isset($words[1]) ? substr($wor
             </div>
         </header>
 
-        <div class="stack">
+        <div class="stack add-shell">
+            <div class="add-page-head">
+                <div><h2>Add Shipment</h2><p id="pageSubtitle">Choose a starting point, then review and save your shipment.</p></div>
+                <div class="add-page-meta"><span id="pageState" class="add-state">New shipment</span><small><?= e(date('d M Y')) ?> · <?= e(ucfirst($role)) ?> workspace</small></div>
+            </div>
 
-            <!-- Step 1: upload -->
-            <section class="card" id="uploadCard">
-                <div class="card-head"><h2>1. Upload shipping documents</h2></div>
-                <p class="muted">One PDF with the Bill of Lading, commercial invoice and packing list. The file is kept with the shipment.</p>
-                <div class="upload-row">
-                    <input type="file" id="pdfFile" accept="application/pdf" aria-label="Choose a PDF file">
-                    <button type="button" class="btn-primary" id="extractBtn">Extract data</button>
-                </div>
-                <p class="status" id="status" role="status"></p>
+            <div class="add-steps" aria-label="Shipment creation progress">
+                <span class="add-step-caption">NEW SHIPMENT</span>
+                <span class="add-step active" id="stepOne"><b>1</b><strong>Choose how to start</strong></span>
+                <span class="add-step-line"></span>
+                <span class="add-step" id="stepTwo"><b>2</b><strong>Review and save</strong></span>
+            </div>
+
+            <section class="start-grid" id="startCard" aria-label="Choose how to create a shipment">
+                <article class="start-card upload-start" id="uploadCard">
+                    <div class="start-card-head"><span class="start-icon">⇧</span><h3>Upload shipping documents <span>(auto-read)</span></h3><p>Start with a PDF packet. We’ll prepare a draft of cargo and invoice details for your review.</p></div>
+                    <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Choose a shipping PDF">
+                        <span class="upload-symbol">⇧</span><strong>Drag and drop your shipping PDF here</strong><span>PDF only · Maximum 25 MB per file</span>
+                        <button type="button" class="btn-primary" id="browseBtn">Browse files</button>
+                    </div>
+                    <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden aria-label="Choose a PDF file">
+                    <div class="upload-state" id="uploadState" hidden>
+                        <div class="file-summary"><span class="pdf-icon">PDF</span><div><strong id="fileName">Document.pdf</strong><small id="fileMeta">PDF · Ready to upload</small></div></div>
+                        <p class="upload-feedback" id="uploadFeedback" role="status"></p>
+                        <div class="progress-track" id="progressTrack" hidden><span id="uploadProgress"></span></div>
+                        <p class="upload-state-note" id="uploadNote"></p>
+                        <div class="upload-state-actions" id="uploadActions" hidden><button type="button" class="btn-primary" id="manualAfterFailure">Continue manually</button><button type="button" class="btn-outline" id="retryRead">Retry reading</button></div>
+                        <button type="button" class="btn-outline cancel-upload" id="cancelUpload" hidden>Cancel upload</button>
+                    </div>
+                </article>
+
+                <article class="start-card manual-start">
+                    <div class="start-card-head"><span class="start-icon">▤</span><h3>Enter details manually</h3><p>Have the details ready? Fill in the shipment form yourself, with fields tailored to Sea, Air or Land.</p></div>
+                    <ul class="start-points"><li>Choose an existing client and transport mode</li><li>Add cargo, route and invoice details</li><li>Check your draft, then save once</li></ul>
+                    <button type="button" class="btn-primary manual-start-button" id="manualBtn">Enter details manually</button>
+                </article>
             </section>
 
-            <!-- Step 2: review and save -->
-            <form id="shipForm" hidden data-has-remarks="<?= $hasRemarks ? '1' : '0' ?>" autocomplete="off">
+            <div class="add-info-strip" id="startInfo"><strong>You stay in control.</strong> Auto-read produces a draft, not a saved shipment. Confirm all extracted values before saving.</div>
 
-                <section class="card">
-                    <div class="card-head"><h2>2. Review and edit</h2></div>
-                    <p class="muted" id="clientHint"></p>
+            <form id="shipForm" class="review-layout" hidden autocomplete="off" novalidate>
+                <div class="review-main">
+                    <section class="review-card">
+                        <div class="review-card-head"><h3><span>01</span> Shipment Basics</h3><small>* Required fields</small></div>
+                        <div class="review-grid three-col">
+                            <label class="field">Client *<select id="f_client_id" name="client_id" required><option value="">Select an existing client</option><?php foreach ($clients as $c): ?><option value="<?= (int)$c['client_id'] ?>"><?= e($c['client_name']) ?></option><?php endforeach; ?></select></label>
+                            <label class="field">Type *<select id="f_transaction_type" name="transaction_type" required><option value="">Select type</option><option value="import">Import</option><option value="export">Export</option></select></label>
+                            <div class="field mode-choice"><span>Mode *</span><div class="mode-segments" role="group" aria-label="Transport mode"><button type="button" data-mode="sea" class="selected">✓ Sea</button><button type="button" data-mode="air">Air</button><button type="button" data-mode="land">Land</button></div><input type="hidden" id="f_mode" name="mode" value="sea"></div>
+                            <label class="field field-span-three">Description / Remarks<textarea id="f_remarks" name="remarks" rows="2" maxlength="2000" placeholder="Add a cargo description or shipment note"></textarea><small class="land-hint" id="landHint" hidden>For Land, the border or port of entry is saved with these remarks.</small></label>
+                        </div>
+                        <p class="client-hint" id="clientHint" hidden></p>
+                    </section>
 
-                    <div class="form-grid">
-                        <div class="field">
-                            <label for="f_client_id">Client *</label>
-                            <select id="f_client_id" name="client_id" required>
-                                <option value="">Select client…</option>
-                                <?php foreach ($clients as $c): ?>
-                                    <option value="<?= (int)$c['client_id'] ?>"><?= e($c['client_name']) ?></option>
-                                <?php endforeach; ?>
-                            </select>
+                    <section class="review-card">
+                        <div class="review-card-head"><h3><span>02</span> Cargo and Route</h3><small id="routeCaption">Sea freight</small></div>
+                        <input type="hidden" name="vessel_or_flight" id="f_vessel_or_flight">
+                        <div class="review-grid three-col" data-mode-section="sea">
+                            <label class="field">B/L No. *<input id="f_bl_awb_no" name="bl_awb_no" maxlength="50" autocomplete="off" required><small class="inline-error" id="duplicateMessage" hidden></small></label>
+                            <label class="field">Vessel<input id="seaVessel" maxlength="60" data-combined="sea-vessel"></label>
+                            <label class="field">Voyage<input id="seaVoyage" maxlength="35" data-combined="sea-voyage"></label>
+                            <label class="field field-span-three">Shipper<input id="f_shipper_name" name="shipper_name" maxlength="150"></label>
+                            <label class="field field-span-three">Consignee<input id="f_consignee_name" name="consignee_name" maxlength="150"></label>
+                            <label class="field field-span-three">Port of Loading<input id="f_port_of_loading" name="port_of_loading" maxlength="100"></label>
+                            <label class="field field-span-three">Port of Discharge<input id="f_port_of_discharge" name="port_of_discharge" maxlength="100"></label>
+                            <label class="field">HS Code<input id="f_hs_code" name="hs_code" maxlength="20"></label>
+                            <label class="field">Packages<input id="f_total_packages" name="total_packages" inputmode="decimal"></label>
+                            <label class="field">Gross Weight (kg)<input id="f_total_gross_weight" name="total_gross_weight" inputmode="decimal"></label>
+                            <label class="field">Measurement (CBM)<input id="f_measurement_cbm" name="measurement_cbm" inputmode="decimal"></label>
+                            <label class="field">Incoterm<input id="f_incoterm" name="incoterm" maxlength="10" placeholder="FOB"></label>
                         </div>
-                        <div class="field">
-                            <label for="f_transaction_type">Transaction type *</label>
-                            <select id="f_transaction_type" name="transaction_type" required>
-                                <option value="">Select…</option>
-                                <option value="import">Import</option>
-                                <option value="export">Export</option>
-                            </select>
+                        <div class="review-grid three-col" data-mode-section="air" hidden>
+                            <label class="field">AWB No. *<input id="airBl" maxlength="50" data-mode-target="bl"></label>
+                            <label class="field">Airline<input id="airline" maxlength="60" data-combined="airline"></label>
+                            <label class="field">Flight No.<input id="flightNo" maxlength="35" data-combined="flight"></label>
+                            <label class="field field-span-three">Shipper<input data-mode-copy="shipper_name" maxlength="150"></label>
+                            <label class="field field-span-three">Consignee<input data-mode-copy="consignee_name" maxlength="150"></label>
+                            <label class="field field-span-three">Airport of Departure<input data-mode-copy="port_of_loading" maxlength="100"></label>
+                            <label class="field field-span-three">Airport of Arrival<input data-mode-copy="port_of_discharge" maxlength="100"></label>
+                            <label class="field">HS Code<input data-mode-copy="hs_code" maxlength="20"></label>
+                            <label class="field">Packages<input data-mode-copy="total_packages" inputmode="decimal"></label>
+                            <label class="field">Gross Weight (kg)<input data-mode-copy="total_gross_weight" inputmode="decimal"></label>
+                            <label class="field">Measurement (CBM)<input data-mode-copy="measurement_cbm" inputmode="decimal"></label>
+                            <label class="field">Incoterm<input data-mode-copy="incoterm" maxlength="10" placeholder="FOB"></label>
                         </div>
-                        <div class="field">
-                            <label for="f_mode">Mode *</label>
-                            <select id="f_mode" name="mode" required>
-                                <option value="sea">Sea</option>
-                                <option value="air">Air</option>
-                                <option value="land">Land</option>
-                            </select>
+                        <div class="review-grid three-col" data-mode-section="land" hidden>
+                            <label class="field">Truck Plate *<input id="truckPlate" maxlength="100" data-combined="truck"></label>
+                            <label class="field">Waybill No. · Optional<input id="landBl" maxlength="50" data-mode-target="bl"></label>
+                            <label class="field">Border or Port of Entry<input id="borderEntry" maxlength="100"></label>
+                            <label class="field field-span-three">Origin<input data-mode-copy="port_of_loading" maxlength="100"></label>
+                            <label class="field field-span-three">Destination<input data-mode-copy="port_of_discharge" maxlength="100"></label>
+                            <label class="field field-span-three">Shipper<input data-mode-copy="shipper_name" maxlength="150"></label>
+                            <label class="field field-span-three">Consignee<input data-mode-copy="consignee_name" maxlength="150"></label>
+                            <label class="field">HS Code<input data-mode-copy="hs_code" maxlength="20"></label>
+                            <label class="field">Packages<input data-mode-copy="total_packages" inputmode="decimal"></label>
+                            <label class="field">Gross Weight (kg)<input data-mode-copy="total_gross_weight" inputmode="decimal"></label>
+                            <label class="field">Measurement (CBM)<input data-mode-copy="measurement_cbm" inputmode="decimal"></label>
                         </div>
+                        <section class="container-section" data-mode-section="sea">
+                            <div class="subsection-head"><div><h4>Containers</h4><small>Sea containers only · Confirm numbers against the source document.</small></div><button type="button" class="btn-outline" id="addContainer">+ Add row</button></div>
+                            <div class="table-wrap"><table id="containerTable"><thead><tr><th>Container No.</th><th>Seal No.</th><th>Size / Type</th><th></th></tr></thead><tbody id="containerBody"></tbody></table></div>
+                        </section>
+                    </section>
 
-                        <div class="field">
-                            <label for="f_bl_awb_no">B/L or AWB number *</label>
-                            <input id="f_bl_awb_no" name="bl_awb_no" maxlength="50" required>
+                    <section class="review-card">
+                        <div class="review-card-head"><h3><span>03</span> Invoice and Values</h3><small>Amounts remain in the selected currency</small></div>
+                        <div class="review-grid three-col">
+                            <label class="field">Invoice No.<input id="f_invoice_no" name="invoice_no" maxlength="50"></label>
+                            <label class="field">Currency<input id="f_currency" name="currency" maxlength="3" placeholder="USD"></label>
+                            <label class="field">Invoice Value<input id="f_invoice_value" name="invoice_value" inputmode="decimal"></label>
+                            <label class="field">Freight<input id="f_freight_amount" name="freight_amount" inputmode="decimal"></label>
+                            <label class="field">FOB Value<input id="f_fob_value" name="fob_value" inputmode="decimal"></label>
                         </div>
-                        <div class="field">
-                            <label for="f_shipper_name">Shipper</label>
-                            <input id="f_shipper_name" name="shipper_name" maxlength="150">
-                        </div>
-                        <div class="field">
-                            <label for="f_consignee_name">Consignee</label>
-                            <input id="f_consignee_name" name="consignee_name" maxlength="150">
-                        </div>
-                        <div class="field">
-                            <label for="f_vessel_or_flight">Vessel / voyage or flight</label>
-                            <input id="f_vessel_or_flight" name="vessel_or_flight" maxlength="100">
-                        </div>
-                        <div class="field">
-                            <label for="f_port_of_loading">Port of loading</label>
-                            <input id="f_port_of_loading" name="port_of_loading" maxlength="100">
-                        </div>
-                        <div class="field">
-                            <label for="f_port_of_discharge">Port of discharge</label>
-                            <input id="f_port_of_discharge" name="port_of_discharge" maxlength="100">
-                        </div>
-                        <div class="field">
-                            <label for="f_hs_code">HS code</label>
-                            <input id="f_hs_code" name="hs_code" maxlength="20">
-                        </div>
-                        <div class="field">
-                            <label for="f_incoterm">Incoterm</label>
-                            <input id="f_incoterm" name="incoterm" maxlength="10">
-                        </div>
-                        <div class="field">
-                            <label for="f_total_packages">Total packages</label>
-                            <input id="f_total_packages" name="total_packages" inputmode="numeric">
-                        </div>
-                        <div class="field">
-                            <label for="f_total_gross_weight">Gross weight (kg)</label>
-                            <input id="f_total_gross_weight" name="total_gross_weight" inputmode="decimal">
-                        </div>
-                        <div class="field">
-                            <label for="f_measurement_cbm">Measurement (CBM)</label>
-                            <input id="f_measurement_cbm" name="measurement_cbm" inputmode="decimal">
-                        </div>
-                    </div>
-                </section>
-
-                <section class="card">
-                    <div class="card-head"><h2>Invoice</h2></div>
-                    <div class="form-grid">
-                        <div class="field">
-                            <label for="f_invoice_no">Invoice no.</label>
-                            <input id="f_invoice_no" name="invoice_no" maxlength="50">
-                        </div>
-                        <div class="field">
-                            <label for="f_currency">Currency</label>
-                            <input id="f_currency" name="currency" maxlength="3" placeholder="USD">
-                        </div>
-                        <div class="field">
-                            <label for="f_invoice_value">Invoice total</label>
-                            <input id="f_invoice_value" name="invoice_value" inputmode="decimal">
-                        </div>
-                        <div class="field">
-                            <label for="f_freight_amount">Ocean freight</label>
-                            <input id="f_freight_amount" name="freight_amount" inputmode="decimal">
-                        </div>
-                        <div class="field">
-                            <label for="f_fob_value">FOB value</label>
-                            <input id="f_fob_value" name="fob_value" inputmode="decimal">
-                        </div>
-                    </div>
-                    <?php if ($hasRemarks): ?>
-                        <div class="field field-wide">
-                            <label for="f_remarks">Description / remarks</label>
-                            <textarea id="f_remarks" name="remarks" rows="3" maxlength="2000"></textarea>
-                        </div>
-                    <?php endif; ?>
-                </section>
-
-                <section class="card">
-                    <div class="card-head">
-                        <h2>Containers</h2>
-                        <button type="button" class="btn-outline" id="addContainer">+ Add container</button>
-                    </div>
-                    <div class="table-wrap">
-                        <table id="containerTable">
-                            <thead><tr><th>Container no.</th><th>Seal no.</th><th>Type</th><th></th></tr></thead>
-                            <tbody id="containerBody"></tbody>
-                        </table>
-                    </div>
-                </section>
-
-                <section class="card" id="checkCard" hidden>
-                    <div class="card-head"><h2>Automatic checks</h2></div>
-                    <ul class="checks" id="checkList"></ul>
-                    <ul class="checks" id="warningList"></ul>
-                </section>
-
-                <div class="form-actions">
-                    <p class="status" id="saveStatus" role="status"></p>
-                    <button type="button" class="btn-outline" id="cancelBtn">Start over</button>
-                    <button type="submit" class="btn-primary" id="saveBtn">Save shipment</button>
+                    </section>
+                    <section class="review-card extraction-card" id="extractionCard" hidden><div class="review-card-head"><h3><span>04</span> Extraction notes</h3></div><ul class="checks" id="checkList"></ul><ul class="checks" id="warningList"></ul></section>
                 </div>
+
+                <aside class="review-aside">
+                    <section class="checks-card">
+                        <div class="checks-head"><h3>Checks</h3><span id="checksBadge" class="checks-badge">Action needed</span></div>
+                        <p class="checks-intro" id="checksIntro">Manual draft · Completeness and amount checks.</p>
+                        <div id="checksDynamic" class="checks-dynamic" aria-live="polite"></div>
+                        <label class="hs-confirm" id="hsConfirmWrap" hidden><input type="checkbox" id="hsConfirm"><span><strong>Confirm HS classification</strong><small>Check this suggested code against the source document.</small></span></label>
+                        <div class="source-document" id="sourceDocument" hidden><small>Source document</small><strong id="sourceFileName"></strong><span id="sourceFileMeta"></span></div>
+                    </section>
+                </aside>
+
+                <footer class="review-footer">
+                    <p class="review-footer-status" id="saveStatus" role="status">Unsaved draft · Complete required details before saving</p>
+                    <div><button type="button" class="btn-outline" id="cancelBtn">Cancel</button><button type="submit" class="btn-primary" id="saveBtn" disabled>Save Shipment</button></div>
+                </footer>
             </form>
 
-            <!-- Step 3: done -->
-            <section class="card success" id="doneCard" hidden>
-                <div class="card-head"><h2>Shipment saved</h2></div>
-                <p>Reference number <strong id="doneRef"></strong> was created with status <em>Documents received</em>.</p>
-                <div class="form-actions left">
-                    <a class="btn-primary" href="shipments.php" id="doneOpen">View shipment</a>
-                    <a class="btn-outline" href="shipment_add.php">Add another shipment</a>
-                </div>
+            <section class="success-card" id="doneCard" hidden>
+                <div class="success-check">✓</div><h2>Shipment added successfully.</h2><p>Your reviewed draft is now shipment <strong id="doneRef"></strong>.</p>
+                <div class="success-summary"><div><small>Client</small><strong id="doneClient"></strong></div><div><small>Type / Mode</small><strong id="doneMode"></strong></div><div><small>B/L or AWB</small><strong id="doneBl"></strong></div></div>
+                <div class="success-stage"><div><small>Initial stage</small><strong>Documents Received</strong></div><div><small>Overview status</small><strong class="success-status">Pending Documents</strong></div></div>
+                <p class="success-note">The document packet is attached when provided. Customs filing, assessment and clearance are separate steps; saving does not complete them.</p>
+                <div class="success-actions"><a class="btn-outline" href="<?= $role === 'admin' ? 'shipments.php' : 'staff_shipment.php' ?>">Back to Shipments</a><a class="btn-primary" href="#" id="doneOpen">View Shipment</a></div>
             </section>
 
+            <div class="start-footer" id="startFooter"><span id="pageMessage">No shipment saved · Choose a method to begin</span><a class="btn-outline" href="<?= $role === 'admin' ? 'shipments.php' : 'staff_shipment.php' ?>">Back to Shipments</a></div>
         </div>
     </main>
 </div>
 
-<script src="assets/js/shipment_add.js"></script>
+<script src="assets/js/shipment_add.js?v=20261024-2"></script>
 </body>
 </html>

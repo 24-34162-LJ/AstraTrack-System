@@ -1,0 +1,50 @@
+/* Customs Processing card and editor. Values and controls follow the existing customs_processing table. */
+.customs-record-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.customs-empty { display: flex; align-items: center; gap: 16px; padding: 18px 0 4px; }
+.customs-empty strong { display: block; margin-bottom: 4px; color: #163a5f; font-size: 15px; }
+.customs-empty p { margin: 0; }
+.customs-empty-icon { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 12px; background: #e4eef7; color: #2878b5; font-size: 28px; }
+.customs-dialog {
+    position: fixed; top: 50%; left: 50%; right: auto; bottom: auto; z-index: 1100;
+    width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: 0; padding: 0;
+    overflow: hidden; border: 0; border-radius: 16px; color: #163a5f; background: #fff;
+    box-shadow: 0 20px 48px rgba(22, 58, 95, .28); transform: translate(-50%, -50%);
+    font-family: "Inter", system-ui, sans-serif;
+}
+.customs-dialog[open] { display: block; }
+.customs-dialog::backdrop { background: rgba(22, 58, 95, .48); }
+.customs-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+.customs-dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 22px 24px 16px; border-bottom: 1px solid #e4e9f0; }
+.customs-dialog-head h2 { color: #163a5f; font: 600 20px/28px "Poppins", "Inter", sans-serif; }
+.customs-dialog-head p { margin-top: 4px; color: #4b5d6e; font-size: 12px; }
+.customs-dialog-close { flex: none; width: 34px; height: 34px; border: 0; border-radius: 9px; color: #163a5f; background: #f4f6f8; font-size: 22px; cursor: pointer; }
+.customs-dialog-body { overflow-y: auto; padding: 18px 24px; }
+.customs-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.customs-form-grid > label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: #163a5f; font-size: 12px; font-weight: 500; }
+.customs-form-grid input:not([type=radio]), .customs-form-grid select, .customs-form-grid textarea {
+    width: 100%; min-width: 0; min-height: 40px; padding: 9px 11px; border: 1px solid #b8c6d4;
+    border-radius: 9px; color: #163a5f; background: #fff; font: 400 13px/20px "Inter", sans-serif;
+}
+.customs-form-grid textarea { min-height: 76px; resize: vertical; }
+.customs-form-grid input:focus, .customs-form-grid select:focus, .customs-form-grid textarea:focus { outline: 0; border-color: #2878b5; box-shadow: 0 0 0 3px rgba(40, 120, 181, .13); }
+.customs-form-grid input[hidden] { display: none; }
+.customs-remarks { grid-column: 1 / -1; }
+.customs-lane { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; }
+.customs-lane legend { margin-bottom: 7px; color: #163a5f; font-size: 12px; font-weight: 500; }
+.customs-lane label { position: relative; display: flex; flex: 1; align-items: center; justify-content: center; min-height: 38px; border: 1px solid #b8c6d4; border-radius: 8px; color: #4b5d6e; font-size: 12px; cursor: pointer; }
+.customs-lane input { position: absolute; opacity: 0; }
+.customs-lane label:has(input:checked) { border-color: #2878b5; color: #163a5f; background: #e4eef7; font-weight: 600; }
+.customs-lane input:focus-visible + span { outline: 2px solid #2878b5; outline-offset: 3px; }
+.customs-field-error { color: #c0353a; font-size: 11px; font-weight: 400; }
+.customs-error-banner { margin-bottom: 14px; padding: 10px 12px; border: 1px solid #f2b6b8; border-radius: 9px; color: #a3292d; background: #fde7e8; font-size: 12px; }
+.customs-form-note { margin-top: 12px; color: #6b7c8d; font-size: 11px; }
+.customs-dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px; border-top: 1px solid #e4e9f0; }
+.customs-dialog-foot > span { color: #6b7c8d; font-size: 11px; }
+.customs-dialog-foot > div { display: flex; gap: 10px; }
+.customs-dialog-foot .btn { cursor: pointer; }
+@media (max-width: 600px) {
+    .customs-dialog-head, .customs-dialog-body { padding-inline: 16px; }
+    .customs-form-grid { grid-template-columns: minmax(0, 1fr); }
+    .customs-lane, .customs-remarks { grid-column: auto; }
+    .customs-dialog-foot { padding-inline: 16px; }
+}
